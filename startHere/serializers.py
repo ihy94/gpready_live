@@ -106,9 +106,18 @@ class OptionSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class ImageSerializer(serializers.ModelSerializer):
+    src = serializers.SerializerMethodField(method_name='get_full_image_url')
     class Meta:
         model = QuestionImage
         fields = ['id', 'title', 'src']
+
+
+    def get_full_image_url(self, obj):
+        request = self.context.get('request')
+        if request is not None and obj.src:
+            return request.build_absolute_uri(obj.src)
+        return None
+    
 
 class BaseQuestionSerializer(serializers.ModelSerializer):
     options = OptionSerializer(many=True)
