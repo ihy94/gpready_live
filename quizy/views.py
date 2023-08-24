@@ -70,7 +70,6 @@ class QuizViewSet(ModelViewSet):
         return serializers.SimpleQuizSerializer
         
     def get_queryset(self):
-        print(settings.ENV)
         user = self.request.user
         query = self.request.query_params.get('subscription')
         queryset = Quiz.objects.prefetch_related('questions').filter(user=user.id, is_playlist=False, exam=True).order_by('-updated_at')
