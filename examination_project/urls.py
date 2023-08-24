@@ -32,8 +32,10 @@ urlpatterns = [
     # path('', TemplateView.as_view(template_name="index.html")),
     
 
-    ] + static(settings.MEDIA_URL,
-                          document_root=settings.MEDIA_ROOT)
+    ] 
+
+# + static(settings.MEDIA_URL,
+                        #   document_root=settings.MEDIA_ROOT)
 
 
 

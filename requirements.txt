@@ -2,6 +2,7 @@ asgiref==3.7.2
 certifi==2023.5.7
 cffi==1.15.1
 charset-normalizer==3.1.0
+cloudinary==1.34.0
 cryptography==41.0.1
 defusedxml==0.7.1
 Django==4.2.3
@@ -43,5 +44,5 @@ social-auth-core==4.4.2
 sqlparse==0.4.4
 stripe==5.5.0
 tzdata==2023.3
-urllib3==2.0.3
+urllib3==1.26.16
 whitenoise==6.5.0

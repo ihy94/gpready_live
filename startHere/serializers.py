@@ -106,9 +106,14 @@ class OptionSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class ImageSerializer(serializers.ModelSerializer):
+    src = serializers.SerializerMethodField(method_name='get_src')
     class Meta:
         model = QuestionImage
         fields = ['id', 'title', 'src']
+
+    
+    def get_src(self, obj):
+        return obj.src.url
         
 
 class BaseQuestionSerializer(serializers.ModelSerializer):
@@ -122,6 +127,7 @@ class BaseQuestionSerializer(serializers.ModelSerializer):
     
     def get_module(self, question):
         pass
+    
     
 class SimpleQuestionSerializer(BaseQuestionSerializer):
     category = serializers.StringRelatedField()    

@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from ckeditor_uploader.fields import RichTextUploadingField
+from cloudinary.models import CloudinaryField
 
 
 class Category(models.Model):
@@ -109,7 +110,8 @@ class QuestionImage(models.Model):
                                     "you want displayed"),
                         verbose_name=('Question Image'))
     
-    src = models.ImageField(upload_to ='question_images/')
+    # src = models.ImageField(upload_to ='question_images/')
+    src = CloudinaryField('image')
 
 class Record(models.Model): 
     category = models.ForeignKey(

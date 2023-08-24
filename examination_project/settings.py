@@ -6,6 +6,11 @@ from datetime import timedelta
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
 
+import cloudinary
+#WARNING: when using proxy config cloudinary should be above cloudinary.uploader !!!
+import cloudinary.uploader
+import cloudinary.api
+
 env = environ.Env()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -48,6 +53,7 @@ INSTALLED_APPS = [
     'rest_framework',
     # 'debug_toolbar',
     'ckeditor',
+    'cloudinary',
     'ckeditor_uploader',
     'quizy',
     'startHere',
@@ -137,8 +143,10 @@ USE_I18N = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.1/howto/static-files/
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT  = os.path.join(BASE_DIR, '/data/media')
+# MEDIA_URL = '/media/'
+# MEDIA_ROOT  = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = ''
+MEDIA_ROOT  = ''
 
 STATIC_URL = '/static/'
 # STATIC_ROOT = os.path.join(BASE_DIR, 'static')
@@ -214,3 +222,11 @@ EMAIL_PORT = env.str('EMAIL_PORT')
 EMAIL_HOST_USER = env.str('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = env.str('EMAIL_HOST_PASSWORD')
 EMAIL_USE_SSL = env.bool('EMAIL_USE_SSL')
+
+
+cloudinary.config( 
+  cloud_name = env.str('CLOUDINARY_NAME'), 
+  api_key = env.str('CLOUDINARY_API_KEY'), 
+  api_secret = env.str('CORS_ALLOWED_ORIGINS'),
+  secure = True,
+)
