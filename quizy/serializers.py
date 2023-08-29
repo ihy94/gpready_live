@@ -170,6 +170,8 @@ class CreateQuestionSessionSerializer(serializers.Serializer):
             sub_categories=sub_categories
         )
 
+        questions = questions.order_by('?') 
+        
         with transaction.atomic():
             question_session = Quiz.objects.create(subscription_id=subscription , quiz_name=quiz_name,user=self.context['user'])
             question_session_items = [
