@@ -11,7 +11,9 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 
+
 env = environ.Env()
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -110,6 +112,13 @@ INTERNAL_IPS = [
 WSGI_APPLICATION = 'examination_project.wsgi.application'
 
 DATABASES = {'default': env.db('DATABASE_URL')}
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 
 # Password validation
 # https://docs.djangoproject.com/en/4.1/ref/settings/#auth-password-validators
@@ -223,10 +232,12 @@ EMAIL_HOST_USER = env.str('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = env.str('EMAIL_HOST_PASSWORD')
 EMAIL_USE_SSL = env.bool('EMAIL_USE_SSL')
 
+config = cloudinary.config(secure=True)
 
-cloudinary.config( 
-  cloud_name = env.str('CLOUDINARY_NAME'), 
-  api_key = env.str('CLOUDINARY_API_KEY'), 
-  api_secret = env.str('CORS_ALLOWED_ORIGINS'),
-  secure = True,
-)
+# cloudinary.config( 
+#   cloud_name = env.str('CLOUDINARY_NAME'), 
+#   api_key = env.str('CLOUDINARY_API_KEY'), 
+#   api_secret = env.str('CORS_ALLOWED_ORIGINS'),
+#   secure = True
+# )
+
