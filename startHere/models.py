@@ -180,4 +180,61 @@ class TextBook(models.Model):
 
     def __str__(self) -> str:
         return self.category.title
+
+
+class AKTTextbookChapter(models.Model):
+    """Curriculum-mapped AKT chapters, kept separate from the existing textbook."""
+
+    chapter_id = models.SlugField(
+        max_length=180,
+        unique=True,
+        help_text="Stable import ID, for example cardio-hypertension-diagnosis.",
+    )
+    curriculum_area = models.CharField(max_length=180)
+    topic = models.CharField(max_length=220)
+    curriculum_outcomes = models.TextField(blank=True)
+    title = models.CharField(max_length=255)
+    position = models.PositiveIntegerField(default=0)
+    content = RichTextUploadingField()
+    sources = models.TextField(blank=True)
+    is_published = models.BooleanField(default=False)
+    package = models.ManyToManyField(
+        'subscription.Package',
+        related_name='akt_textbook_chapters',
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['curriculum_area', 'topic', 'position', 'title']
+        indexes = [
+            models.Index(fields=['curriculum_area', 'topic', 'position']),
+        ]
+
+    def __str__(self):
+        return f'{self.curriculum_area} — {self.title}'
+
+
+class AKTTextbookProgress(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='akt_textbook_progress',
+    )
+    chapter = models.ForeignKey(
+        AKTTextbookChapter,
+        on_delete=models.CASCADE,
+        related_name='progress_entries',
+    )
+    is_complete = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'chapter'], name='unique_akt_chapter_progress'),
+        ]
+
+    def __str__(self):
+        return f'{self.user} — {self.chapter} — {"complete" if self.is_complete else "in progress"}'
         

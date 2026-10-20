@@ -1,0 +1,42 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  › <a href="{% url 'admin:app_list' app_label='startHere' %}">StartHere</a>
+  › <a href="{% url 'admin:startHere_akttextbookchapter_changelist' %}">AKT textbook chapters</a>
+  › Bulk upload
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <p>Upload one workbook to create or update multiple AKT textbook chapters. The importer uses each chapter ID to update the matching chapter on later uploads; it does not use or alter the existing SCA textbook categories.</p>
+  <p><a class="button" href="{% url 'admin:startHere_akttextbookchapter_download_template' %}">Download the Excel template</a></p>
+
+  {% if errors %}
+  <div class="messagelist">
+    {% for error in errors %}<div class="error">{{ error }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      {{ form.as_p }}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="Validate and import chapters" class="default">
+    </div>
+  </form>
+
+  <div class="module" style="max-width:900px;margin-top:24px">
+    <h2>Workbook format</h2>
+    <p>The first sheet must be named <code>AKT_Import</code>. Use one row per chapter and these exact columns:</p>
+    <p><code>chapter_id, curriculum_area, topic, curriculum_outcomes, title, order, body_html, sources</code></p>
+    <p>Use a permanent lowercase ID such as <code>cardio-hypertension-diagnosis</code>. Put the RCGP learning outcome wording or references in <code>curriculum_outcomes</code>, with one item per line. Put the formatted chapter HTML in <code>body_html</code>; separate multiple references in <code>sources</code> with line breaks. Choose the relevant package(s) once above.</p>
+    <p>Imported chapters are saved as drafts. Select reviewed chapters in the chapter list and use the publish action when ready.</p>
+  </div>
+</div>
+{% endblock %}

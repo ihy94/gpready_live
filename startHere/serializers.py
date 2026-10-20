@@ -1,5 +1,15 @@
 from rest_framework import serializers
-from .models import Category, Record, Option, Question, QuestionImage, Note, Report, TextBook
+from .models import (
+    AKTTextbookChapter,
+    Category,
+    Record,
+    Option,
+    Question,
+    QuestionImage,
+    Note,
+    Report,
+    TextBook,
+)
 
 class RecordSerializer(serializers.ModelSerializer):
     attempted_questions =  serializers.SerializerMethodField(method_name='get_attemted_questions')
@@ -190,3 +200,37 @@ class TextBookSearchSerializer(serializers.ModelSerializer):
     class Meta:
         model = TextBook
         fields = ('id', 'category')
+
+
+class AKTTextbookChapterSerializer(serializers.ModelSerializer):
+    is_complete = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = AKTTextbookChapter
+        fields = (
+            'chapter_id',
+            'curriculum_area',
+            'topic',
+            'curriculum_outcomes',
+            'title',
+            'position',
+            'content',
+            'sources',
+            'is_complete',
+        )
+
+
+class AKTTextbookChapterListSerializer(serializers.ModelSerializer):
+    is_complete = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = AKTTextbookChapter
+        fields = (
+            'chapter_id',
+            'curriculum_area',
+            'topic',
+            'curriculum_outcomes',
+            'title',
+            'position',
+            'is_complete',
+        )

@@ -1,5 +1,16 @@
 from django.contrib import admin
-from .models import Category, Question, Option, QuestionImage, Record,  Note, TextBook, Report
+from .models import (
+    AKTTextbookChapter,
+    Category,
+    Question,
+    Option,
+    QuestionImage,
+    Record,
+    Note,
+    TextBook,
+    Report,
+)
+from subscription.models import Package
 from django import forms
 from django.utils.html import format_html
 from django_object_actions import DjangoObjectActions
@@ -7,6 +18,7 @@ from django.shortcuts import render
 from django.contrib import messages
 from django.http import HttpResponseRedirect, HttpResponse
 from django.db import transaction
+from django.urls import path, reverse
 import pandas as pd
 import openpyxl as xl
 import re
@@ -34,6 +46,217 @@ class QuestionAdmin(admin.ModelAdmin):
 class TextbookAdmin(admin.ModelAdmin):
     search_fields = ['content__icontains']
     autocomplete_fields = ["category"]
+
+
+class AKTTextbookUploadForm(forms.Form):
+    file = forms.FileField(label='AKT textbook workbook')
+    packages = forms.ModelMultipleChoiceField(
+        label='Make chapters available in these packages',
+        queryset=Package.objects.all(),
+        help_text='Choose the package(s) once for this upload. These package assignments will be applied to every imported chapter.',
+    )
+
+
+@admin.register(AKTTextbookChapter)
+class AKTTextbookChapterAdmin(admin.ModelAdmin):
+    change_list_template = 'admin/startHere/akttextbookchapter/change_list.html'
+    list_display = (
+        'chapter_id', 'title', 'curriculum_area', 'topic', 'is_published', 'updated_at'
+    )
+    list_filter = ('curriculum_area', 'topic', 'is_published', 'package')
+    search_fields = ('chapter_id', 'title', 'curriculum_area', 'topic')
+    list_editable = ('is_published',)
+    actions = ('publish_selected', 'unpublish_selected')
+    readonly_fields = ('created_at', 'updated_at')
+
+    IMPORT_COLUMNS = (
+        'chapter_id', 'curriculum_area', 'topic', 'curriculum_outcomes',
+        'title', 'order', 'body_html', 'sources'
+    )
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'bulk-upload/',
+                self.admin_site.admin_view(self.bulk_upload_view),
+                name='startHere_akttextbookchapter_bulk_upload',
+            ),
+            path(
+                'download-template/',
+                self.admin_site.admin_view(self.download_template),
+                name='startHere_akttextbookchapter_download_template',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    @admin.action(description='Publish selected AKT chapters')
+    def publish_selected(self, request, queryset):
+        updated = queryset.update(is_published=True)
+        self.message_user(request, f'{updated} AKT chapter(s) published.')
+
+    @admin.action(description='Return selected AKT chapters to draft')
+    def unpublish_selected(self, request, queryset):
+        updated = queryset.update(is_published=False)
+        self.message_user(request, f'{updated} AKT chapter(s) returned to draft.')
+
+    def download_template(self, request):
+        workbook = xl.Workbook()
+        sheet = workbook.active
+        sheet.title = 'AKT_Import'
+        sheet.append(self.IMPORT_COLUMNS)
+        sheet.freeze_panes = 'A2'
+        for column, width in {
+            'A': 34, 'B': 28, 'C': 30, 'D': 60, 'E': 40, 'F': 12, 'G': 80, 'H': 60,
+        }.items():
+            sheet.column_dimensions[column].width = width
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="GPReady_AKT_Textbook_Import_Template.xlsx"'
+        workbook.save(response)
+        return response
+
+    def _render_upload(self, request, form, errors=None):
+        context = {
+            **self.admin_site.each_context(request),
+            'opts': self.model._meta,
+            'form': form,
+            'errors': errors or [],
+            'title': 'Bulk upload AKT textbook chapters',
+        }
+        return render(request, 'admin/startHere/akttextbookchapter/bulk_upload.html', context)
+
+    def bulk_upload_view(self, request):
+        form = AKTTextbookUploadForm(request.POST or None, request.FILES or None)
+        if request.method != 'POST' or not form.is_valid():
+            return self._render_upload(request, form)
+
+        uploaded_file = form.cleaned_data['file']
+        if not uploaded_file.name.lower().endswith('.xlsx'):
+            form.add_error('file', 'Upload an .xlsx workbook.')
+            return self._render_upload(request, form)
+
+        errors = []
+        parsed_rows = []
+        seen_ids = set()
+        try:
+            workbook = xl.load_workbook(uploaded_file, read_only=True, data_only=True)
+            if not workbook.sheetnames or workbook.sheetnames[0] != 'AKT_Import':
+                errors.append('The first worksheet must be named AKT_Import.')
+            else:
+                sheet = workbook['AKT_Import']
+                values = sheet.iter_rows(values_only=True)
+                headers = next(values, None)
+                normalised_headers = [str(value).strip().lower() if value is not None else '' for value in (headers or ())]
+                missing = [column for column in self.IMPORT_COLUMNS if column not in normalised_headers]
+                if missing:
+                    errors.append('Missing required columns: ' + ', '.join(missing))
+                else:
+                    indexes = {column: normalised_headers.index(column) for column in self.IMPORT_COLUMNS}
+
+                    def cell(row, column):
+                        value = row[indexes[column]] if indexes[column] < len(row) else None
+                        return '' if value is None else str(value).strip()
+
+                    for row_number, row in enumerate(values, start=2):
+                        if not row or not any(value not in (None, '') for value in row):
+                            continue
+
+                        chapter_id = cell(row, 'chapter_id').lower()
+                        curriculum_area = cell(row, 'curriculum_area')
+                        topic = cell(row, 'topic')
+                        curriculum_outcomes = cell(row, 'curriculum_outcomes')
+                        title = cell(row, 'title')
+                        body_html = cell(row, 'body_html')
+                        sources = cell(row, 'sources')
+                        raw_order = row[indexes['order']] if indexes['order'] < len(row) else None
+
+                        if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', chapter_id):
+                            errors.append(f'Row {row_number}: chapter_id must be a lowercase, hyphenated ID.')
+                        elif len(chapter_id) > 180:
+                            errors.append(f'Row {row_number}: chapter_id must be 180 characters or fewer.')
+                        elif chapter_id in seen_ids:
+                            errors.append(f'Row {row_number}: duplicate chapter_id "{chapter_id}" in this workbook.')
+                        else:
+                            seen_ids.add(chapter_id)
+
+                        for field_name, field_value in (
+                            ('curriculum_area', curriculum_area),
+                            ('topic', topic),
+                            ('title', title),
+                            ('body_html', body_html),
+                        ):
+                            if not field_value:
+                                errors.append(f'Row {row_number}: {field_name} is required.')
+
+                        for field_name, field_value, max_length in (
+                            ('curriculum_area', curriculum_area, 180),
+                            ('topic', topic, 220),
+                            ('title', title, 255),
+                        ):
+                            if len(field_value) > max_length:
+                                errors.append(f'Row {row_number}: {field_name} must be {max_length} characters or fewer.')
+
+                        try:
+                            position = int(raw_order) if raw_order not in (None, '') else 0
+                            if isinstance(raw_order, float) and not raw_order.is_integer():
+                                raise ValueError
+                            if position < 0:
+                                raise ValueError
+                        except (TypeError, ValueError):
+                            errors.append(f'Row {row_number}: order must be a whole number zero or greater.')
+                            position = 0
+
+                        parsed_rows.append({
+                            'chapter_id': chapter_id,
+                            'curriculum_area': curriculum_area,
+                            'topic': topic,
+                            'curriculum_outcomes': curriculum_outcomes,
+                            'title': title,
+                            'position': position,
+                            'content': body_html,
+                            'sources': sources,
+                        })
+        except Exception as exc:
+            errors.append(f'Could not read the workbook: {exc}')
+
+        if not parsed_rows:
+            errors.append('The workbook contains no chapter rows.')
+
+        if errors:
+            return self._render_upload(request, form, errors)
+
+        created_count = 0
+        updated_count = 0
+        with transaction.atomic():
+            for chapter_data in parsed_rows:
+                chapter, created = AKTTextbookChapter.objects.update_or_create(
+                    chapter_id=chapter_data['chapter_id'],
+                    defaults={
+                        'curriculum_area': chapter_data['curriculum_area'],
+                        'topic': chapter_data['topic'],
+                        'curriculum_outcomes': chapter_data['curriculum_outcomes'],
+                        'title': chapter_data['title'],
+                        'position': chapter_data['position'],
+                        'content': chapter_data['content'],
+                        'sources': chapter_data['sources'],
+                        # Imports always need a fresh review before the content is live.
+                        'is_published': False,
+                    },
+                )
+                chapter.package.set(form.cleaned_data['packages'])
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+
+        messages.success(
+            request,
+            f'Import complete: {created_count} chapter(s) created and {updated_count} updated. '
+            'Imported chapters are drafts; review and publish them from the chapter list.',
+        )
+        return HttpResponseRedirect(reverse('admin:startHere_akttextbookchapter_changelist'))
 
 
 
