@@ -12,6 +12,7 @@ router.register('note', views.NoteViewSet, basename='notes')
 router.register('categories', views.CategoryViewSet, basename='categories')
 
 router.register('textbooks', views.TextBookViewSet, basename='textbooxs')
+router.register('akt-textbook/chapters', views.AKTTextbookChapterViewSet, basename='akt-textbook-chapters')
 
 categories_router = routers.NestedDefaultRouter(router, 'categories', lookup='category')
 
@@ -20,6 +21,5 @@ categories_router.register('textbook', views.TextBookViewSet, basename='category
 
 urlpatterns = [
     path('count_questions/', views.CountQuestions.as_view()),
-    path('score_comparison/', views.ScoreComparisonView.as_view()),
 ] + router.urls + categories_router.urls 
 

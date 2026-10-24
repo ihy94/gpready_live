@@ -1,9 +1,12 @@
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from . import serializers
-from .models import Category, Record, Report, Note,  TextBook
+from .models import AKTTextbookChapter, AKTTextbookProgress, Category, Record, Report, Note, TextBook
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.db.models import Prefetch, Sum
+from rest_framework import status
+from rest_framework.decorators import action
+from django.db.models import Exists, OuterRef, Prefetch
+from django.utils import timezone
 from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from .filters import NoteFilter
 from . import serializers
@@ -131,94 +134,6 @@ class CountQuestions(APIView):
 
         return Response(questions.count())
 
-
-class ScoreComparisonView(APIView):
-    """Return privacy-preserving, package-level score aggregates for the current learner."""
-
-    permission_classes = [IsAuthenticated & IsSubcribed]
-    minimum_attempts = 20
-    minimum_peers = 30
-
-    def get(self, request, format=None):
-        package = request.query_params.get('package')
-        try:
-            package_id = int(package)
-            if package_id < 1:
-                raise ValueError
-        except (TypeError, ValueError):
-            return Response({'detail': 'A valid package is required.'}, status=400)
-
-        # Root-category records already include their subcategory answers, matching
-        # the totals used by the Questions page and avoiding double-counting.
-        category_ids = list(
-            Category.objects.filter(parent__isnull=True, package__id=package_id)
-            .values_list('id', flat=True)
-        )
-        if not category_ids:
-            return Response({
-                'available': False,
-                'reason': 'no_categories',
-                'attempts': 0,
-                'accuracy': None,
-            })
-
-        own = Record.objects.filter(
-            user_id=request.user.id,
-            category_id__in=category_ids,
-        ).aggregate(correct=Sum('correct_answers'), wrong=Sum('wrong_answers'))
-        correct = own['correct'] or 0
-        wrong = own['wrong'] or 0
-        attempts = correct + wrong
-        accuracy = round((correct / attempts) * 100) if attempts else None
-
-        if attempts < self.minimum_attempts:
-            return Response({
-                'available': False,
-                'reason': 'minimum_attempts',
-                'minimum_attempts': self.minimum_attempts,
-                'attempts': attempts,
-                'accuracy': accuracy,
-            })
-
-        other_records = (
-            Record.objects.filter(category_id__in=category_ids)
-            .exclude(user_id=request.user.id)
-            .values('user_id')
-            .annotate(correct=Sum('correct_answers'), wrong=Sum('wrong_answers'))
-        )
-        peer_scores = []
-        for record in other_records.iterator():
-            peer_attempts = (record['correct'] or 0) + (record['wrong'] or 0)
-            if peer_attempts >= self.minimum_attempts:
-                peer_scores.append(round((record['correct'] or 0) / peer_attempts * 100))
-
-        # Do not reveal a distribution, average, or rank for a small cohort.
-        if len(peer_scores) < self.minimum_peers:
-            return Response({
-                'available': False,
-                'reason': 'small_cohort',
-                'attempts': attempts,
-                'accuracy': accuracy,
-            })
-
-        buckets = [0] * 10
-        for score in peer_scores:
-            buckets[min(score // 10, 9)] += 1
-
-        below = sum(score < accuracy for score in peer_scores)
-        equal = sum(score == accuracy for score in peer_scores)
-        percentile = round(((below + equal / 2) / len(peer_scores)) * 100)
-
-        return Response({
-            'available': True,
-            'attempts': attempts,
-            'accuracy': accuracy,
-            'cohort_size': len(peer_scores),
-            'cohort_average': round(sum(peer_scores) / len(peer_scores)),
-            'percentile': percentile,
-            'histogram': buckets,
-        })
-
 class TextBookViewSet(ReadOnlyModelViewSet):
     serializer_class = serializers.TextBookSerializer
     permission_classes = [IsAuthenticated & hasActiveSubscription]
@@ -246,3 +161,64 @@ class TextBookViewSet(ReadOnlyModelViewSet):
 
 
         return TextBook.objects.all()
+
+
+class AKTTextbookChapterViewSet(ReadOnlyModelViewSet):
+    """Published AKT chapters; the existing TextBook routes are left intact."""
+
+    serializer_class = serializers.AKTTextbookChapterSerializer
+    permission_classes = [IsAuthenticated & hasActiveSubscription]
+    lookup_field = 'chapter_id'
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return serializers.AKTTextbookChapterListSerializer
+        return serializers.AKTTextbookChapterSerializer
+
+    def get_queryset(self):
+        active_package_ids = self.request.user.subscriptions.filter(
+            active=True,
+            expiry_date__gt=timezone.now(),
+        ).values_list('package_id', flat=True)
+        queryset = AKTTextbookChapter.objects.filter(
+            is_published=True,
+            package__in=active_package_ids,
+        ).annotate(
+            is_complete=Exists(
+                AKTTextbookProgress.objects.filter(
+                    chapter_id=OuterRef('pk'),
+                    user=self.request.user,
+                    is_complete=True,
+                )
+            )
+        )
+
+        selected_package = self.request.query_params.get('package')
+        if selected_package:
+            queryset = queryset.filter(package__id=selected_package)
+
+        return queryset.distinct()
+
+    @action(detail=True, methods=['post'], url_path='progress')
+    def update_progress(self, request, chapter_id=None):
+        chapter = self.get_object()
+        is_complete = request.data.get('is_complete')
+        if not isinstance(is_complete, bool):
+            return Response(
+                {'detail': 'is_complete must be true or false.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        progress, _ = AKTTextbookProgress.objects.update_or_create(
+            user=request.user,
+            chapter=chapter,
+            defaults={
+                'is_complete': is_complete,
+                'completed_at': timezone.now() if is_complete else None,
+            },
+        )
+        return Response({
+            'chapter_id': chapter.chapter_id,
+            'is_complete': progress.is_complete,
+            'completed_at': progress.completed_at,
+        })
