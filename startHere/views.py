@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import action
-from django.db.models import Exists, OuterRef, Prefetch
+from django.db.models import Exists, OuterRef, Prefetch, Sum
 from django.utils import timezone
 from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from .filters import NoteFilter
@@ -133,6 +133,94 @@ class CountQuestions(APIView):
         print(questions)
 
         return Response(questions.count())
+
+
+class ScoreComparisonView(APIView):
+    """Return anonymous package-level score aggregates for the current learner."""
+
+    permission_classes = [IsAuthenticated & IsSubcribed]
+    minimum_attempts = 20
+    minimum_peers = 30
+
+    def get(self, request, format=None):
+        package = request.query_params.get('package')
+        try:
+            package_id = int(package)
+            if package_id < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({'detail': 'A valid package is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Category.package is a many-to-many field, so filter through package__id.
+        category_ids = list(
+            Category.objects.filter(parent__isnull=True, package__id=package_id)
+            .values_list('id', flat=True)
+        )
+        if not category_ids:
+            return Response({
+                'available': False,
+                'reason': 'no_categories',
+                'attempts': 0,
+                'accuracy': None,
+            })
+
+        own = Record.objects.filter(
+            user_id=request.user.id,
+            category_id__in=category_ids,
+        ).aggregate(correct=Sum('correct_answers'), wrong=Sum('wrong_answers'))
+        correct = own['correct'] or 0
+        wrong = own['wrong'] or 0
+        attempts = correct + wrong
+        accuracy = round((correct / attempts) * 100) if attempts else None
+
+        if attempts < self.minimum_attempts:
+            return Response({
+                'available': False,
+                'reason': 'minimum_attempts',
+                'minimum_attempts': self.minimum_attempts,
+                'attempts': attempts,
+                'accuracy': accuracy,
+            })
+
+        other_records = (
+            Record.objects.filter(category_id__in=category_ids)
+            .exclude(user_id=request.user.id)
+            .values('user_id')
+            .annotate(correct=Sum('correct_answers'), wrong=Sum('wrong_answers'))
+        )
+        peer_scores = []
+        for record in other_records.iterator():
+            peer_correct = record['correct'] or 0
+            peer_attempts = peer_correct + (record['wrong'] or 0)
+            if peer_attempts >= self.minimum_attempts:
+                peer_scores.append(round(peer_correct / peer_attempts * 100))
+
+        # Suppress the comparison until the cohort is large enough for privacy.
+        if len(peer_scores) < self.minimum_peers:
+            return Response({
+                'available': False,
+                'reason': 'small_cohort',
+                'attempts': attempts,
+                'accuracy': accuracy,
+            })
+
+        histogram = [0] * 10
+        for score in peer_scores:
+            histogram[min(score // 10, 9)] += 1
+
+        below = sum(score < accuracy for score in peer_scores)
+        equal = sum(score == accuracy for score in peer_scores)
+        percentile = round(((below + equal / 2) / len(peer_scores)) * 100)
+
+        return Response({
+            'available': True,
+            'attempts': attempts,
+            'accuracy': accuracy,
+            'cohort_size': len(peer_scores),
+            'cohort_average': round(sum(peer_scores) / len(peer_scores)),
+            'percentile': percentile,
+            'histogram': histogram,
+        })
 
 class TextBookViewSet(ReadOnlyModelViewSet):
     serializer_class = serializers.TextBookSerializer

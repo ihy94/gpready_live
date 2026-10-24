@@ -21,5 +21,6 @@ categories_router.register('textbook', views.TextBookViewSet, basename='category
 
 urlpatterns = [
     path('count_questions/', views.CountQuestions.as_view()),
+    path('score_comparison/', views.ScoreComparisonView.as_view()),
 ] + router.urls + categories_router.urls 
 
