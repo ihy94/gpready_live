@@ -1,0 +1,42 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  › <a href="{% url 'admin:app_list' app_label='startHere' %}">StartHere</a>
+  › <a href="{% url 'admin:startHere_aktflashcard_changelist' %}">AKT flashcards</a>
+  › Bulk upload
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <p>Upload one workbook to create or update AKT flashcards. The importer uses each card ID to update a matching card on later uploads. Choose the AKT package or packages that should contain these cards.</p>
+  <p><a class="button" href="{% url 'admin:startHere_aktflashcard_download_template' %}">Download the Excel template</a></p>
+
+  {% if errors %}
+  <div class="messagelist">
+    {% for error in errors %}<div class="error">{{ error }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      {{ form.as_p }}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="Validate and import flashcards" class="default">
+    </div>
+  </form>
+
+  <div class="module" style="max-width:900px;margin-top:24px">
+    <h2>Workbook format</h2>
+    <p>The first worksheet must be named <code>Flashcard_Import</code>. Use one row per card and these exact columns:</p>
+    <p><code>card_id, deck, topic, front, clue, answer, learning_point, source, tags, difficulty, status</code></p>
+    <p>Difficulty must be Foundation, Intermediate or Advanced. Status can be Draft, Reviewed or Published. Only Published cards appear in the learner flashcard area. Each card ID should be unique and lowercase, with hyphens between words.</p>
+    <p>Every card in this upload will be assigned to the package or packages selected above. Existing card IDs are updated when you upload the workbook again.</p>
+  </div>
+</div>
+{% endblock %}

@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import (
+    AKTFlashcard,
     AKTTextbookChapter,
     Category,
     Question,
@@ -25,6 +26,15 @@ import re
 
 class FileUploader(forms.Form):
     file = forms.FileField()
+
+
+class AKTFlashcardUploadForm(forms.Form):
+    file = forms.FileField(label='AKT flashcard workbook')
+    packages = forms.ModelMultipleChoiceField(
+        label='Make cards available in these packages',
+        queryset=Package.objects.all(),
+        help_text='The selected package assignments apply to every imported card.',
+    )
 
 
 class OptionInline(admin.TabularInline):
@@ -502,4 +512,173 @@ class CategoryAdmin(DjangoObjectActions, admin.ModelAdmin):
 #         css = {
 #             'all' : ['quizy/styles.css']
 #         }
+
+
+@admin.register(AKTFlashcard)
+class AKTFlashcardAdmin(admin.ModelAdmin):
+    change_list_template = 'admin/startHere/aktflashcard/change_list.html'
+    list_display = ('card_id', 'deck', 'topic', 'difficulty', 'status', 'updated_at')
+    list_filter = ('deck', 'difficulty', 'status', 'package')
+    search_fields = ('card_id', 'deck', 'topic', 'front', 'answer', 'tags')
+    list_editable = ('status',)
+    actions = ('publish_selected', 'unpublish_selected')
+    readonly_fields = ('created_at', 'updated_at')
+
+    IMPORT_COLUMNS = (
+        'card_id', 'deck', 'topic', 'front', 'clue', 'answer',
+        'learning_point', 'source', 'tags', 'difficulty', 'status',
+    )
+    STATUS_VALUES = {'draft', 'reviewed', 'published'}
+    DIFFICULTIES = {'foundation', 'intermediate', 'advanced'}
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'bulk-upload/', self.admin_site.admin_view(self.bulk_upload_view),
+                name='startHere_aktflashcard_bulk_upload',
+            ),
+            path(
+                'download-template/', self.admin_site.admin_view(self.download_template),
+                name='startHere_aktflashcard_download_template',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    @admin.action(description='Publish selected AKT flashcards')
+    def publish_selected(self, request, queryset):
+        updated = queryset.update(status='Published')
+        self.message_user(request, f'{updated} flashcard(s) published.')
+
+    @admin.action(description='Return selected AKT flashcards to draft')
+    def unpublish_selected(self, request, queryset):
+        updated = queryset.update(status='Draft')
+        self.message_user(request, f'{updated} flashcard(s) returned to draft.')
+
+    def download_template(self, request):
+        workbook = xl.Workbook()
+        sheet = workbook.active
+        sheet.title = 'Flashcard_Import'
+        sheet.append(self.IMPORT_COLUMNS)
+        sheet.freeze_panes = 'A2'
+        for column, width in {
+            'A': 34, 'B': 24, 'C': 28, 'D': 58, 'E': 42, 'F': 58,
+            'G': 48, 'H': 42, 'I': 28, 'J': 18, 'K': 16,
+        }.items():
+            sheet.column_dimensions[column].width = width
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="GPReady_AKT_Flashcard_Import_Template.xlsx"'
+        workbook.save(response)
+        return response
+
+    def _render_flashcard_upload(self, request, form, errors=None):
+        context = {
+            **self.admin_site.each_context(request),
+            'opts': self.model._meta,
+            'form': form,
+            'errors': errors or [],
+            'title': 'Bulk upload AKT flashcards',
+        }
+        return render(request, 'admin/startHere/aktflashcard/bulk_upload.html', context)
+
+    def bulk_upload_view(self, request):
+        form = AKTFlashcardUploadForm(request.POST or None, request.FILES or None)
+        if request.method != 'POST' or not form.is_valid():
+            return self._render_flashcard_upload(request, form)
+
+        uploaded_file = form.cleaned_data['file']
+        if not uploaded_file.name.lower().endswith('.xlsx'):
+            form.add_error('file', 'Upload an .xlsx workbook.')
+            return self._render_flashcard_upload(request, form)
+
+        errors = []
+        parsed_rows = []
+        seen_ids = set()
+        try:
+            workbook = xl.load_workbook(uploaded_file, read_only=True, data_only=True)
+            if not workbook.sheetnames or workbook.sheetnames[0] != 'Flashcard_Import':
+                errors.append('The first worksheet must be named Flashcard_Import.')
+            else:
+                rows = workbook['Flashcard_Import'].iter_rows(values_only=True)
+                headers = next(rows, None)
+                normalised = [str(value).strip().lower() if value is not None else '' for value in (headers or ())]
+                missing = [column for column in self.IMPORT_COLUMNS if column not in normalised]
+                if missing:
+                    errors.append('Missing required columns: ' + ', '.join(missing))
+                else:
+                    indexes = {column: normalised.index(column) for column in self.IMPORT_COLUMNS}
+
+                    def cell(row, column):
+                        index = indexes[column]
+                        value = row[index] if index < len(row) else None
+                        return '' if value is None else str(value).strip()
+
+                    for row_number, row in enumerate(rows, start=2):
+                        if not row or not any(value not in (None, '') for value in row):
+                            continue
+                        card_id = cell(row, 'card_id').lower()
+                        record = {column: cell(row, column) for column in self.IMPORT_COLUMNS}
+                        if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', card_id):
+                            errors.append(f'Row {row_number}: card_id must be a lowercase, hyphenated ID.')
+                        elif len(card_id) > 180:
+                            errors.append(f'Row {row_number}: card_id must be 180 characters or fewer.')
+                        elif card_id in seen_ids:
+                            errors.append(f'Row {row_number}: duplicate card_id "{card_id}" in this workbook.')
+                        else:
+                            seen_ids.add(card_id)
+
+                        for field_name in ('deck', 'topic', 'front', 'answer'):
+                            if not record[field_name]:
+                                errors.append(f'Row {row_number}: {field_name} is required.')
+                        for field_name, maximum in (('deck', 180), ('topic', 220), ('tags', 500)):
+                            if len(record[field_name]) > maximum:
+                                errors.append(f'Row {row_number}: {field_name} must be {maximum} characters or fewer.')
+                        difficulty = record['difficulty'].title() or 'Intermediate'
+                        if difficulty.lower() not in self.DIFFICULTIES:
+                            errors.append(f'Row {row_number}: difficulty must be Foundation, Intermediate or Advanced.')
+                        state = record['status'].lower() or 'draft'
+                        if state not in self.STATUS_VALUES:
+                            errors.append(f'Row {row_number}: status must be Draft, Reviewed or Published.')
+
+                        parsed_rows.append({
+                            'card_id': card_id,
+                            'deck': record['deck'],
+                            'topic': record['topic'],
+                            'front': record['front'],
+                            'clue': record['clue'],
+                            'answer': record['answer'],
+                            'learning_point': record['learning_point'],
+                            'source': record['source'],
+                            'tags': record['tags'],
+                            'difficulty': difficulty,
+                            # Draft and Reviewed content stays hidden until explicitly published.
+                            'status': state.title(),
+                        })
+        except Exception as exc:
+            errors.append(f'Could not read the workbook: {exc}')
+
+        if not parsed_rows:
+            errors.append('The workbook contains no flashcard rows.')
+        if errors:
+            return self._render_flashcard_upload(request, form, errors)
+
+        created_count = updated_count = 0
+        with transaction.atomic():
+            for data in parsed_rows:
+                card, created = AKTFlashcard.objects.update_or_create(
+                    card_id=data.pop('card_id'), defaults=data,
+                )
+                card.package.set(form.cleaned_data['packages'])
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+
+        messages.success(
+            request,
+            f'Import complete: {created_count} flashcard(s) created and {updated_count} updated. '
+            'Draft and Reviewed cards remain hidden until published.',
+        )
+        return HttpResponseRedirect(reverse('admin:startHere_aktflashcard_changelist'))
 

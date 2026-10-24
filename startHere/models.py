@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 from ckeditor_uploader.fields import RichTextUploadingField
 from cloudinary.models import CloudinaryField
 
@@ -237,4 +238,77 @@ class AKTTextbookProgress(models.Model):
 
     def __str__(self):
         return f'{self.user} — {self.chapter} — {"complete" if self.is_complete else "in progress"}'
+
+
+class AKTFlashcard(models.Model):
+    """Shared AKT flashcard content, independent of learner review history."""
+
+    DIFFICULTY_CHOICES = [
+        ('Foundation', 'Foundation'),
+        ('Intermediate', 'Intermediate'),
+        ('Advanced', 'Advanced'),
+    ]
+    STATUS_CHOICES = [
+        ('Draft', 'Draft'),
+        ('Reviewed', 'Reviewed'),
+        ('Published', 'Published'),
+    ]
+
+    card_id = models.SlugField(max_length=180, unique=True)
+    deck = models.CharField(max_length=180)
+    topic = models.CharField(max_length=220)
+    front = models.TextField()
+    clue = models.TextField(blank=True)
+    answer = models.TextField()
+    learning_point = models.TextField(blank=True)
+    source = models.TextField(blank=True)
+    tags = models.CharField(max_length=500, blank=True)
+    difficulty = models.CharField(max_length=20, choices=DIFFICULTY_CHOICES, default='Intermediate')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='Draft')
+    package = models.ManyToManyField(
+        'subscription.Package', related_name='akt_flashcards', blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['deck', 'topic', 'card_id']
+        indexes = [models.Index(fields=['deck', 'topic'], name='startHere_akt_deck_topic_idx')]
+
+    def __str__(self):
+        return f'{self.deck} — {self.topic}: {self.card_id}'
+
+
+class AKTFlashcardReview(models.Model):
+    """Per-user scheduling and saved state for one shared flashcard."""
+
+    RATING_CHOICES = [
+        ('again', 'Again'),
+        ('hard', 'Hard'),
+        ('good', 'Good'),
+        ('easy', 'Easy'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='akt_flashcard_reviews',
+    )
+    card = models.ForeignKey(
+        AKTFlashcard, on_delete=models.CASCADE, related_name='review_states',
+    )
+    due_at = models.DateTimeField(default=timezone.now)
+    interval_days = models.PositiveIntegerField(default=0)
+    repetitions = models.PositiveIntegerField(default=0)
+    lapses = models.PositiveIntegerField(default=0)
+    last_rating = models.CharField(max_length=8, choices=RATING_CHOICES, blank=True)
+    last_reviewed_at = models.DateTimeField(null=True, blank=True)
+    is_bookmarked = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'card'], name='unique_akt_flashcard_review'),
+        ]
+        indexes = [models.Index(fields=['user', 'due_at'], name='startHere_akt_user_due_idx')]
+
+    def __str__(self):
+        return f'{self.user} — {self.card.card_id}'
         

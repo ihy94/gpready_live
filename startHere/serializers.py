@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from .models import (
+    AKTFlashcard,
+    AKTFlashcardReview,
     AKTTextbookChapter,
     Category,
     Record,
@@ -218,6 +220,43 @@ class AKTTextbookChapterSerializer(serializers.ModelSerializer):
             'sources',
             'is_complete',
         )
+
+
+class AKTFlashcardSerializer(serializers.ModelSerializer):
+    is_bookmarked = serializers.SerializerMethodField()
+    due_at = serializers.SerializerMethodField()
+    interval_days = serializers.SerializerMethodField()
+    repetitions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AKTFlashcard
+        fields = (
+            'card_id', 'deck', 'topic', 'front', 'clue', 'answer',
+            'learning_point', 'source', 'tags', 'difficulty',
+            'is_bookmarked', 'due_at', 'interval_days', 'repetitions',
+        )
+
+    def _review(self, card):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        return AKTFlashcardReview.objects.filter(user=request.user, card=card).first()
+
+    def get_is_bookmarked(self, card):
+        review = self._review(card)
+        return review.is_bookmarked if review else False
+
+    def get_due_at(self, card):
+        review = self._review(card)
+        return review.due_at if review else None
+
+    def get_interval_days(self, card):
+        review = self._review(card)
+        return review.interval_days if review else 0
+
+    def get_repetitions(self, card):
+        review = self._review(card)
+        return review.repetitions if review else 0
 
 
 class AKTTextbookChapterListSerializer(serializers.ModelSerializer):

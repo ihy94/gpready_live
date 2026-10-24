@@ -1,6 +1,6 @@
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from . import serializers
-from .models import AKTTextbookChapter, AKTTextbookProgress, Category, Record, Report, Note, TextBook
+from .models import AKTFlashcard, AKTFlashcardReview, AKTTextbookChapter, AKTTextbookProgress, Category, Record, Report, Note, TextBook
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -13,13 +13,15 @@ from . import serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from startHere.permissions import IsSubcribed, hasActiveSubscription
+from startHere.permissions import HasActivePackageSubscription, IsSubcribed, hasActiveSubscription
 from rest_framework import mixins
 from rest_framework.viewsets import GenericViewSet 
 from django.db.models import Q 
 from .pagination import DefaultPagination
 from subscription.models import Subscription
 from startHere.services import filter_questions
+from datetime import timedelta
+from math import ceil
 
 
 class ReportViewSet(mixins.CreateModelMixin,GenericViewSet):
@@ -310,3 +312,107 @@ class AKTTextbookChapterViewSet(ReadOnlyModelViewSet):
             'is_complete': progress.is_complete,
             'completed_at': progress.completed_at,
         })
+
+
+class AKTFlashcardViewSet(ReadOnlyModelViewSet):
+    """Published cards for an active package, with private user scheduling."""
+
+    serializer_class = serializers.AKTFlashcardSerializer
+    permission_classes = [IsAuthenticated, HasActivePackageSubscription]
+    lookup_field = 'card_id'
+
+    def _base_queryset(self):
+        return AKTFlashcard.objects.filter(
+            status='Published',
+            package__id=getattr(self, 'package_id', self.request.query_params.get('package')),
+        ).distinct()
+
+    def get_queryset(self):
+        queryset = self._base_queryset()
+        mode = self.request.query_params.get('mode', 'all')
+        user = self.request.user
+        now = timezone.now()
+        if mode == 'due':
+            user_review = AKTFlashcardReview.objects.filter(user=user, card_id=OuterRef('pk'))
+            due_review = user_review.filter(Q(last_reviewed_at__isnull=True) | Q(due_at__lte=now))
+            return queryset.annotate(
+                has_user_review=Exists(user_review),
+                has_due_review=Exists(due_review),
+            ).filter(Q(has_user_review=False) | Q(has_due_review=True))
+        if mode == 'saved':
+            return queryset.filter(review_states__user=user, review_states__is_bookmarked=True).distinct()
+        if mode != 'all':
+            return queryset.none()
+        return queryset
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        cards = self._base_queryset()
+        now = timezone.now()
+        user_review = AKTFlashcardReview.objects.filter(user=request.user, card_id=OuterRef('pk'))
+        reviewed_state = user_review.filter(last_reviewed_at__isnull=False)
+        due_review = user_review.filter(Q(last_reviewed_at__isnull=True) | Q(due_at__lte=now))
+        saved_review = user_review.filter(is_bookmarked=True)
+        return Response({
+            'total_count': cards.count(),
+            'new_count': cards.annotate(has_reviewed=Exists(reviewed_state)).filter(has_reviewed=False).count(),
+            'due_count': cards.annotate(
+                has_user_review=Exists(user_review),
+                has_due_review=Exists(due_review),
+            ).filter(Q(has_user_review=False) | Q(has_due_review=True)).count(),
+            'saved_count': cards.annotate(has_saved_review=Exists(saved_review)).filter(has_saved_review=True).count(),
+        })
+
+    @action(detail=True, methods=['post'])
+    def review(self, request, card_id=None):
+        card = self.get_object()
+        rating = str(request.data.get('rating', '')).lower()
+        if rating not in {'again', 'hard', 'good', 'easy'}:
+            return Response(
+                {'detail': 'rating must be again, hard, good or easy.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        review, _ = AKTFlashcardReview.objects.get_or_create(user=request.user, card=card)
+        previous_interval = review.interval_days
+        now = timezone.now()
+        if rating == 'again':
+            review.due_at = now + timedelta(minutes=10)
+            review.interval_days = 0
+            review.repetitions = 0
+            review.lapses += 1
+        else:
+            if rating == 'hard':
+                interval = max(1, ceil(previous_interval * 1.2)) if previous_interval else 1
+            elif rating == 'good':
+                interval = max(3, ceil(previous_interval * 2.5)) if previous_interval else 3
+            else:
+                interval = max(7, ceil(previous_interval * 3.5)) if previous_interval else 7
+            review.interval_days = interval
+            review.due_at = now + timedelta(days=interval)
+            review.repetitions += 1
+        review.last_rating = rating
+        review.last_reviewed_at = now
+        review.save()
+        return Response({
+            'card_id': card.card_id,
+            'rating': rating,
+            'due_at': review.due_at,
+            'interval_days': review.interval_days,
+            'repetitions': review.repetitions,
+            'lapses': review.lapses,
+        })
+
+    @action(detail=True, methods=['post'])
+    def bookmark(self, request, card_id=None):
+        card = self.get_object()
+        is_bookmarked = request.data.get('is_bookmarked')
+        if not isinstance(is_bookmarked, bool):
+            return Response(
+                {'detail': 'is_bookmarked must be true or false.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        review, _ = AKTFlashcardReview.objects.get_or_create(user=request.user, card=card)
+        review.is_bookmarked = is_bookmarked
+        review.save(update_fields=['is_bookmarked'])
+        return Response({'card_id': card.card_id, 'is_bookmarked': review.is_bookmarked})

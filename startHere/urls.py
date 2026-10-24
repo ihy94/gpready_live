@@ -13,6 +13,7 @@ router.register('categories', views.CategoryViewSet, basename='categories')
 
 router.register('textbooks', views.TextBookViewSet, basename='textbooxs')
 router.register('akt-textbook/chapters', views.AKTTextbookChapterViewSet, basename='akt-textbook-chapters')
+router.register('akt-flashcards', views.AKTFlashcardViewSet, basename='akt-flashcards')
 
 categories_router = routers.NestedDefaultRouter(router, 'categories', lookup='category')
 
