@@ -1,6 +1,6 @@
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from . import serializers
-from .models import AKTFlashcard, AKTFlashcardReview, AKTTextbookChapter, AKTTextbookProgress, Category, Record, Report, Note, TextBook
+from .models import AKTFlashcard, AKTFlashcardReview, AKTTextbookChapter, AKTTextbookProgress, SCATextbookProgress, Category, Record, Report, Note, TextBook
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -239,18 +239,94 @@ class TextBookViewSet(ReadOnlyModelViewSet):
     def get_queryset(self):
         query = self.request.query_params.get('query', '')
         package = self.request.query_params.get('package')
-        if query and package:
-            return TextBook.objects.filter(
+        queryset = TextBook.objects.all()
+
+        if package:
+            queryset = queryset.filter(package__id=package)
+
+        if query:
+            queryset = queryset.filter(
                 Q(content__icontains=query) |
-                Q(content__istartswith=query),
-                package=package, 
-            ).distinct()
+                Q(content__istartswith=query)
+            )
         
         if self.kwargs.get('category_pk'):
-            return TextBook.objects.filter(category_id=self.kwargs['category_pk'])
+            queryset = queryset.filter(category_id=self.kwargs['category_pk'])
 
+        return queryset.annotate(
+            is_complete=Exists(
+                SCATextbookProgress.objects.filter(
+                    textbook_id=OuterRef('pk'),
+                    user=self.request.user,
+                    is_complete=True,
+                )
+            )
+        ).distinct()
 
-        return TextBook.objects.all()
+    def _valid_package_access(self, package_id):
+        try:
+            package_id = int(package_id)
+            if package_id < 1:
+                return False
+        except (TypeError, ValueError):
+            return False
+
+        return self.request.user.subscriptions.filter(
+            package_id=package_id,
+            active=True,
+            expiry_date__gt=timezone.now(),
+        ).exists()
+
+    @action(detail=False, methods=['get'], url_path='progress')
+    def progress_summary(self, request):
+        package_id = request.query_params.get('package')
+        if not self._valid_package_access(package_id):
+            return Response({'detail': 'A valid active package is required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        cases = TextBook.objects.filter(package__id=package_id).annotate(
+            is_complete=Exists(
+                SCATextbookProgress.objects.filter(
+                    textbook_id=OuterRef('pk'),
+                    user=request.user,
+                    is_complete=True,
+                )
+            )
+        ).distinct()
+        completed_ids = list(cases.filter(is_complete=True).values_list('id', flat=True))
+        return Response({
+            'total_cases': cases.count(),
+            'completed_cases': len(completed_ids),
+            'completed_textbook_ids': completed_ids,
+        })
+
+    @action(detail=True, methods=['post'], url_path='progress')
+    def update_progress(self, request, pk=None):
+        package_id = request.query_params.get('package')
+        if not self._valid_package_access(package_id):
+            return Response({'detail': 'A valid active package is required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        textbook = self.get_object()
+        if not textbook.package.filter(id=package_id).exists():
+            return Response({'detail': 'This case is not part of the selected package.'}, status=status.HTTP_404_NOT_FOUND)
+
+        is_complete = request.data.get('is_complete')
+        if not isinstance(is_complete, bool):
+            return Response({'detail': 'is_complete must be true or false.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        progress, _ = SCATextbookProgress.objects.update_or_create(
+            user=request.user,
+            textbook=textbook,
+            defaults={
+                'is_complete': is_complete,
+                'completed_at': timezone.now() if is_complete else None,
+            },
+        )
+        return Response({
+            'textbook_id': textbook.id,
+            'category_id': textbook.category_id,
+            'is_complete': progress.is_complete,
+            'completed_at': progress.completed_at,
+        })
 
 
 class AKTTextbookChapterViewSet(ReadOnlyModelViewSet):

@@ -183,6 +183,31 @@ class TextBook(models.Model):
         return self.category.title
 
 
+class SCATextbookProgress(models.Model):
+    """Per-learner completion state for an existing SCA textbook case."""
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sca_textbook_progress',
+    )
+    textbook = models.ForeignKey(
+        TextBook,
+        on_delete=models.CASCADE,
+        related_name='sca_progress_entries',
+    )
+    is_complete = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'textbook'], name='unique_sca_textbook_progress'),
+        ]
+
+    def __str__(self):
+        state = 'complete' if self.is_complete else 'in progress'
+        return f'{self.user} — {self.textbook} — {state}'
+
+
 class AKTTextbookChapter(models.Model):
     """Curriculum-mapped AKT chapters, kept separate from the existing textbook."""
 

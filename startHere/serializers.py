@@ -188,9 +188,11 @@ class ReportSerializer(serializers.ModelSerializer):
         return Report.objects.create(user=self.context['user'], **validated_data)
 
 class TextBookSerializer(serializers.ModelSerializer):
+    is_complete = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = TextBook
-        fields = ('id', 'content', 'created_at', 'updated_at')
+        fields = ('id', 'content', 'created_at', 'updated_at', 'is_complete')
 
 class SimpleCategorySerializerForTextBook(serializers.ModelSerializer):
     class Meta:

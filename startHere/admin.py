@@ -2,6 +2,7 @@ from django.contrib import admin
 from .models import (
     AKTFlashcard,
     AKTTextbookChapter,
+    SCATextbookProgress,
     Category,
     Question,
     Option,
@@ -56,6 +57,14 @@ class QuestionAdmin(admin.ModelAdmin):
 class TextbookAdmin(admin.ModelAdmin):
     search_fields = ['content__icontains']
     autocomplete_fields = ["category"]
+
+
+@admin.register(SCATextbookProgress)
+class SCATextbookProgressAdmin(admin.ModelAdmin):
+    list_display = ('user', 'textbook', 'is_complete', 'completed_at')
+    list_filter = ('is_complete',)
+    search_fields = ('user__username', 'textbook__title', 'textbook__category__title')
+    autocomplete_fields = ('user', 'textbook')
 
 
 class AKTTextbookUploadForm(forms.Form):
