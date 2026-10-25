@@ -80,6 +80,7 @@ class CreateCheckoutSessionView(APIView):
                 ],
                 metadata=metadataData,
                 mode='payment',
+                allow_promotion_codes=True,
                 success_url=settings.STRIPE_SUCCESS_REDIRECT_URL,
                 cancel_url=settings.STRIPE_CANCEL_REDIRECT_URL
             )
