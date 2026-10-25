@@ -5,7 +5,7 @@ from django.http import HttpResponse
 from django.conf import settings
 import stripe
 from django.views.decorators.csrf import csrf_exempt
-from subscription.models import Package, Subscription
+from subscription.models import Package, PackagePlan, Subscription
 from rest_framework.viewsets import ReadOnlyModelViewSet, ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
@@ -34,6 +34,17 @@ class PackageViewset(ReadOnlyModelViewSet):
 class CreateCheckoutSessionView(APIView):
     def post(self, request, *args, **kwargs):
         package = Package.objects.get(id=request.data['packID'])
+
+        try:
+            plan = PackagePlan.objects.get(
+                package=package,
+                plan_duration=request.data.get('duration')
+            )
+        except (PackagePlan.DoesNotExist, PackagePlan.MultipleObjectsReturned, ValueError, TypeError):
+            return Response({
+                'msg': 'Invalid or duplicate package subscription plan'
+            }, status=400)
+
         YOUR_DOMAIN = "http://127.0.0.1:8000"            
         if Subscription.objects.filter(user_id=request.user.id, package_id=request.data['packID'], active=True).exists():
             return Response({
@@ -69,7 +80,7 @@ class CreateCheckoutSessionView(APIView):
                     {
                         'price_data': {
                             'currency': 'gbp',
-                            'unit_amount': request.data['price'] * 100,
+                            'unit_amount': int(plan.price * 100),
                             'product_data': {
                                 'name': package.title,
                                 'description' : str(request.data['duration']) + ' months subscription',                                
